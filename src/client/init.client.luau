@@ -1,13 +1,16 @@
-task.wait(.5)
+--!nonstrict
+task.wait(3)
+warn("tung tung hook .ccc")
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local module = require(ReplicatedStorage.Shared.BufferNet)
-warn("oka")
 local net = module.new()
--- listen for client event
-net:OnClientEvent("Pong", function()
-    print("got pong from server")
-end)
+local char = Players.LocalPlayer.Character
+local humanoid = char:WaitForChild("Humanoid")
 
--- start ts off
-net:FireServer("Ping")
-print("sent to server")
+while true do
+    net:FireServerUnreliable("Replication", {humanoid.RootPart.CFrame})
+    print("ok garmin save video")
+
+    task.wait()
+end

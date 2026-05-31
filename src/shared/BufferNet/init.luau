@@ -55,13 +55,13 @@ function BufferNet.new(path: Instance?)
             -- / @ iterate through each remote so we can index them on the client
             for _, instance: Instance in communicationsFolder:GetDescendants() do
                 local i = instance -- / @ the strict typechecking in question:
-                if not instance:IsA("RemoteEvent") and not instance:IsA("RemoteFunction") then
+                if not instance:IsA("RemoteEvent") and not instance:IsA("RemoteFunction") and not instance:IsA("UnreliableRemoteEvent") then
                     continue
                 end
                 
                 -- / @ insert
                 self.Remotes[tostring(instance)] = {
-                    Type = (instance.ClassName:lower():gsub("remote", "")) :: "event" | "function", 
+                    Type = (instance.ClassName:lower():gsub("remote", "")) :: "event" | "function" | "unreliableevent", 
                     Instance = instance :: RemoteEvent | RemoteFunction,
                     Alias = tostring(instance),
                     Options = instance:GetAttributes() :: types.Options
@@ -80,7 +80,7 @@ function BufferNet.new(path: Instance?)
         communications.Parent = path or ReplicatedStorage
         communications:AddTag("_BufferNetCommunication")
 
-        -- / @ crate Events & Functions subdirectories
+        -- / @ crate Events & Functions & Unreliables subdirectories
         local events = Instance.new("Folder")
         events.Name = "Events"
         events.Parent = communications
@@ -88,6 +88,10 @@ function BufferNet.new(path: Instance?)
         local functions = Instance.new("Folder")
         functions.Name = "Functions"
         functions.Parent = communications
+
+        local unreliables = Instance.new("Folder")
+        unreliables.Name = "Unreliables"
+        unreliables.Parent = communications
 
         -- / @ exclusively to the server, return a method so the server can finish initialization any time
         function self.FinishInitilaztion()
@@ -111,7 +115,7 @@ end
 									 -- the client
 ]=]
 function BufferNet:CreateRemote(
-    type: "Event" | "Function" | "event" | "function", 
+    type: "Event" | "Function" | "event" | "function" | "unreliable" | "Unreliable", 
     alias: string, 
     callback: (any) -> (any)?,
     options: types.Options?
@@ -126,8 +130,14 @@ function BufferNet:CreateRemote(
         error("BufferNet hasn't initialized yet", 2)
     end
 
+    -- / @ autocomplete
+    local type = type;
+    if type:lower() == "unreliable" then
+        type = "unreliableevent"
+    end
+
     -- / @ typechecking
-    utils.assertTypes({"event", "function", "Event", "Function"}, type, 1)
+    utils.assertTypes({"event", "function", "Event", "Function", "unreliableevent"}, type, 1)
     utils.assertTypes("string", alias, 2)
 
     -- / @ handle both cases which type == "Event" or type == "Function"
@@ -213,8 +223,31 @@ function BufferNet:CreateRemote(
         end
 
         self.Remotes[alias] = remote
+     elseif type:lower() == "unreliableevent" then
+            local unreliableRemoteEvent = Instance.new("UnreliableRemoteEvent")
+            unreliableRemoteEvent.Name = alias
+            unreliableRemoteEvent.Parent = self.Communications:FindFirstChild("Unreliables")
+
+            local remote = {
+                Type = "unreliableevent",
+                Alias = alias,
+                Instance = unreliableRemoteEvent,
+                Callback = callback,
+                Options = options or {}
+            } :: types.Remote
+        
+            -- / @ unreliable remote events do not support encryption
+            -- / @ as out-of-order/dropped packets make key sync unreliable
+            if options and options.IsEncrypted then
+                warn("BufferNet: encryption is not supported on UnreliableRemoteEvents, ignoring")
+            end
+        
+            local connection = tunnel:Initialize(unreliableRemoteEvent, callback)
+            remote.Connection = connection
+        
+            self.Remotes[alias] = remote
+        end
     end
-end
 --[=[
     @method FireServer
     Call :FireServer on a RemoteEvent
@@ -725,6 +758,198 @@ function BufferNet:OnClientInvoke(alias: string, callback: (any) -> (any))
         local deserializedArgs = typeSerializers:Deserialize(serializedArgs)
         return callback(unpack(deserializedArgs or {}))
     end
+end
+
+--[=[
+    @method FireServerUnreliable
+    Fires an UnreliableRemoteEvent from the client to the server.
+    (use for replication stuff where you can ignore package loss)
+
+    @param alias string -- Remote to fire's alias
+    @param ... -- Arguments to send
+]=]
+function BufferNet:FireServerUnreliable(alias: string, ...)
+    if not RunService:IsClient() then
+        error("This method can only be called from the Client context", 2)
+    end
+
+    if not self.Initialized or not self.Communications then
+        error("BufferNet hasn't initialized yet", 2)
+    end
+
+    local remote = self.Remotes[alias] :: types.Remote
+    if not remote then
+        error(`UnreliableRemoteEvent "{alias}" doesn't exist`, 2)
+    end
+
+    if remote.Type:lower() ~= "unreliableevent" then
+        error(`"{alias}" is not an UnreliableRemoteEvent`, 2)
+    end
+
+    local args = {...}
+    local serializedArgs = typeSerializers:Serialize(args)
+
+    local argumentsBuffer = buffer.create(serializedArgs:len())
+    buffer.writestring(argumentsBuffer, 0, serializedArgs)
+
+    local unreliableRemoteEvent = remote.Instance :: UnreliableRemoteEvent
+    unreliableRemoteEvent:FireServer(argumentsBuffer)
+end
+
+--[=[
+    @method FireClientUnreliable
+    Fires an UnreliableRemoteEvent from the server to a specific client.
+
+    @param alias string -- Remote to fire's alias
+    @param player Player -- The player to fire to
+    @param ... -- Arguments to send
+]=]
+function BufferNet:FireClientUnreliable(alias: string, player: Player, ...)
+    if not RunService:IsServer() then
+        error("This method can only be called from the Server context", 2)
+    end
+
+    if not self.Initialized or not self.Communications then
+        error("BufferNet hasn't initialized yet", 2)
+    end
+
+    local remote = self.Remotes[alias] :: types.Remote
+    if not remote then
+        error(`UnreliableRemoteEvent "{alias}" doesn't exist`, 2)
+    end
+
+    if remote.Type:lower() ~= "unreliableevent" then
+        error(`"{alias}" is not an UnreliableRemoteEvent`, 2)
+    end
+
+    local args = {...}
+    local serializedArgs = typeSerializers:Serialize(args)
+
+    local argumentsBuffer = buffer.create(serializedArgs:len())
+    buffer.writestring(argumentsBuffer, 0, serializedArgs)
+
+    local unreliableRemoteEvent = remote.Instance :: UnreliableRemoteEvent
+    unreliableRemoteEvent:FireClient(player, argumentsBuffer)
+end
+
+--[=[
+    @method FireAllClientsUnreliable
+    Fires an UnreliableRemoteEvent from the server to every connected player.
+
+    @param alias string -- Remote to fire's alias
+    @param ... -- Arguments to send
+]=]
+function BufferNet:FireAllClientsUnreliable(alias: string, ...)
+    if not RunService:IsServer() then
+        error("This method can only be called from the Server context", 2)
+    end
+
+    if not self.Initialized or not self.Communications then
+        error("BufferNet hasn't initialized yet", 2)
+    end
+
+    local remote = self.Remotes[alias] :: types.Remote
+    if not remote then
+        error(`UnreliableRemoteEvent "{alias}" doesn't exist`, 2)
+    end
+
+    if remote.Type:lower() ~= "unreliableevent" then
+        error(`"{alias}" is not an UnreliableRemoteEvent`, 2)
+    end
+
+    local args = {...}
+    local serializedArgs = typeSerializers:Serialize(args)
+
+    local argumentsBuffer = buffer.create(serializedArgs:len())
+    buffer.writestring(argumentsBuffer, 0, serializedArgs)
+
+    local unreliableRemoteEvent = remote.Instance :: UnreliableRemoteEvent
+    unreliableRemoteEvent:FireAllClients(argumentsBuffer)
+end
+
+--[=[
+    @method FireAllClientsUnreliableExcept
+    Fires an UnreliableRemoteEvent to all players except the one(s) specified.
+
+    @param alias string -- Remote to fire's alias
+    @param excluded Player | {Player} -- Player or list of players to skip
+    @param ... -- Arguments to send
+]=]
+function BufferNet:FireAllClientsUnreliableExcept(alias: string, excluded: Player | {Player}, ...)
+    if not RunService:IsServer() then
+        error("This method can only be called from the Server context", 2)
+    end
+
+    if not self.Initialized or not self.Communications then
+        error("BufferNet hasn't initialized yet", 2)
+    end
+
+    local remote = self.Remotes[alias] :: types.Remote
+    if not remote then
+        error(`UnreliableRemoteEvent "{alias}" doesn't exist`, 2)
+    end
+
+    if remote.Type:lower() ~= "unreliableevent" then
+        error(`"{alias}" is not an UnreliableRemoteEvent`, 2)
+    end
+
+    local excludedSet: {[Player]: boolean} = {}
+    if typeof(excluded) == "Instance" then
+        excludedSet[excluded :: Player] = true
+    else
+        for _, p in excluded :: {Player} do
+            excludedSet[p] = true
+        end
+    end
+
+    local args = {...}
+    local serializedArgs = typeSerializers:Serialize(args)
+
+    local argumentsBuffer = buffer.create(serializedArgs:len())
+    buffer.writestring(argumentsBuffer, 0, serializedArgs)
+
+    local unreliableRemoteEvent = remote.Instance :: UnreliableRemoteEvent
+    for _, player in game:GetService("Players"):GetPlayers() do
+        if not excludedSet[player] then
+            unreliableRemoteEvent:FireClient(player, argumentsBuffer)
+        end
+    end
+end
+
+--[=[
+    @method OnClientEventUnreliable
+    Connects a callback to an UnreliableRemoteEvent on the client side.
+    Returns an RBXScriptConnection so you can disconnect later.
+
+    @param alias string -- The remote's alias to listen to
+    @param callback (any) -> () -- Function to call when the event fires
+    @return RBXScriptConnection
+]=]
+function BufferNet:OnClientEventUnreliable(alias: string, callback: (any) -> ())
+    if not RunService:IsClient() then
+        error("This method can only be called from the Client context", 2)
+    end
+
+    if not self.Initialized or not self.Communications then
+        error("BufferNet hasn't initialized yet", 2)
+    end
+
+    local remote = self.Remotes[alias] :: types.Remote
+    if not remote then
+        error(`UnreliableRemoteEvent "{alias}" doesn't exist`, 2)
+    end
+
+    if remote.Type:lower() ~= "unreliableevent" then
+        error(`"{alias}" is not an UnreliableRemoteEvent`, 2)
+    end
+
+    local unreliableRemoteEvent = remote.Instance :: UnreliableRemoteEvent
+
+    return unreliableRemoteEvent.OnClientEvent:Connect(function(argumentsBuffer: buffer)
+        local serializedArgs = buffer.readstring(argumentsBuffer, 0, buffer.len(argumentsBuffer))
+        local deserializedArgs = typeSerializers:Deserialize(serializedArgs)
+        callback(table.unpack(deserializedArgs))
+    end)
 end
 
 return BufferNet

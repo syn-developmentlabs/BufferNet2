@@ -76,7 +76,7 @@ local function serializeTable(table: {[any]: any}): {[any]: any}
             newTable[key] = `<{valueType}>({tostring(value)})`
         end
     end
-
+ 
     return newTable
 end
 
@@ -130,7 +130,7 @@ end
     @return {[any]: any}
 ]=]
 function TypeSerializers:Deserialize(table: string): {[any]: any}
-    return unpack(deserializeTable(HttpService:JSONDecode(table)))
+    return deserializeTable(HttpService:JSONDecode(table))
 end
 
 return TypeSerializers

@@ -1,13 +1,14 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local module = require(ReplicatedStorage.Shared.BufferNet)
-
 local net = module.new(game:GetService("ReplicatedStorage"))
-net:CreateRemote("Event", "Pong")
-net:CreateRemote("Event", "Ping", function(player: Player)
-    print(`got ping: {player.Name}, sending pong...`)
-    warn(net)
-    net:FireClient("Pong", player)
-end)
 
+local myNewPart = Instance.new("Part")
+myNewPart.Anchored = true
+myNewPart.Parent = workspace
+myNewPart.Name = "ReplicationPart"
+
+net:CreateRemote("Unreliable", "Replication", function(a0: Player, cframe: CFrame)
+    warn(cframe)
+end)
 
 net.FinishInitilaztion()

@@ -17,9 +17,9 @@ export type EncryptionInformation = {
 }
 
 export type Remote = {
-    Type: "Event" | "Function" | "event" | "function",
+    Type: "Event" | "Function" | "event" | "function" | "unreliableevent",
     Alias: string,
-    Instance: RemoteEvent | RemoteFunction,
+    Instance: RemoteEvent | RemoteFunction | UnreliableRemoteEvent,
     Callback: ((any) -> ()?)?,
     Connection: RBXScriptConnection?,
     Options: Options?,

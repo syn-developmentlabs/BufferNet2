@@ -20,7 +20,7 @@ local encryption     = require("./Encryption")
     @param instance RemoteEvent
 ]=]
 function Tunnel:Initialize(
-    instance: RemoteEvent | RemoteFunction, 
+    instance: RemoteEvent | RemoteFunction | UnreliableRemoteEvent, 
     callback: (any) -> (any?), 
     isEncrypted: boolean?, 
     encryptionDetails: types.EncryptionInformation?
@@ -48,6 +48,25 @@ function Tunnel:Initialize(
             -- / @ deseralize & unpack
             local deserialized = typeSerializer:Deserialize(stringifiedBuffer)
             coroutine.wrap(callback)(a0, unpack(deserialized or {}))
+        end)
+    elseif instance:IsA("UnreliableRemoteEvent") then -- / @ did this because of typechecking
+        -- / @ connect the OnServerEvent
+        return instance.OnServerEvent:Connect(function(a0: Player, dataBuffer: buffer)
+            assert(typeof(dataBuffer) == "buffer", "BufferNet: error in network tunnel, must send a buffer.")
+            
+            -- / @ covnert buffer into string
+            local stringifiedBuffer: string = buffer.tostring(dataBuffer)
+
+            -- / @ encrypt if applicable
+            if isEncrypted and encryptionDetails then
+                local decryptionResult = encryption:Decrypt(stringifiedBuffer, encryptionDetails.EncryptionMasterKey, a0:GetNetworkPing())
+                if not decryptionResult then return; end
+                stringifiedBuffer = decryptionResult
+            end
+
+            -- / @ deseralize & unpack
+            local deserialized = typeSerializer:Deserialize(stringifiedBuffer)
+            coroutine.wrap(callback)(a0, unpack(deserialized or {})) 
         end)
     else
         -- / @ set up onserverinvoke
