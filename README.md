@@ -1,4 +1,5 @@
-# BufferNet2
+# Reef 3
+~~previously BufferNet~~
 
 ## Setup
 
