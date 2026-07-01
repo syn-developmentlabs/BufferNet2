@@ -1,4 +1,5 @@
 # Reef 3
+![Banner](banner.png)
 ~~previously BufferNet~~
 
 ## Setup
